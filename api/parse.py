@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler
 import json
 import re
 import zipfile
+import gzip
 import io
 from typing import Optional, List, Dict
 
@@ -89,9 +90,18 @@ class ItineraryParser:
         if idx >= len(tokens):
             return None
 
-        # 2. VUELO
-        if re.match(r'^\d+$', tokens[idx]):
-            result['vuelo'] = tokens[idx]
+        # 2. VUELO - handle both "1 MEX" and "1MEX" formats
+        token = tokens[idx]
+        if re.match(r'^\d+$', token):
+            # Format: "1" "MEX" (separate tokens)
+            result['vuelo'] = token
+            idx += 1
+        elif re.match(r'^(\d+)([A-Z]{3})$', token):
+            # Format: "1MEX" (concatenated - pdfplumber format)
+            match = re.match(r'^(\d+)([A-Z]{3})$', token)
+            result['vuelo'] = match.group(1)
+            # Insert the airport back as a pseudo-token for segment parsing
+            tokens = tokens[:idx] + [match.group(1), match.group(2)] + tokens[idx+1:]
             idx += 1
         else:
             return None
@@ -103,6 +113,24 @@ class ItineraryParser:
         boundary = self._find_section_boundary(tokens, idx)
         flight_tokens = tokens[idx:boundary]
 
+        # Pre-process flight_tokens to split concatenated time+airport tokens
+        # e.g., "10MAD" -> "10", "MAD" or "1030MEX" -> "1030", "MEX"
+        expanded_tokens = []
+        for token in flight_tokens:
+            # Check if token is time+airport concatenated (e.g., "1030MAD", "955MEX")
+            concat_match = re.match(r'^(\d{2,4})([A-Z]{3})$', token)
+            if concat_match:
+                time_part = concat_match.group(1)
+                airport_part = concat_match.group(2)
+                if int(time_part) <= 2359:  # Valid time
+                    expanded_tokens.append(time_part)
+                    expanded_tokens.append(airport_part)
+                else:
+                    expanded_tokens.append(token)
+            else:
+                expanded_tokens.append(token)
+
+        flight_tokens = expanded_tokens
         segments = []
         seg_idx = 0
 
@@ -174,7 +202,10 @@ class ItineraryParser:
                 continue
             if re.match(r'^\s*\d{1,3}\s*$', line):
                 continue
-            if re.match(r'^\s*[AC\s]?\s*\d+\s+[A-Z]{3}\s+\d+', line):
+            # Match both formats:
+            # - "1 MEX 10" (PDFKit format with spaces)
+            # - "1MEX 10MAD" (pdfplumber format, concatenated)
+            if re.match(r'^\s*[AC\-]?\s*\d+\s*[A-Z]{3}\s+\d+', line):
                 parsed = self.parse_line(line)
                 if parsed and parsed['vuelo']:
                     flights.append(parsed)
@@ -237,6 +268,16 @@ def is_zip(data: bytes) -> bool:
     return data[:4] == b'PK\x03\x04'
 
 
+def is_gzip(data: bytes) -> bool:
+    """Check if data is gzip compressed"""
+    return data[:2] == b'\x1f\x8b'
+
+
+def decompress_gzip(data: bytes) -> bytes:
+    """Decompress gzip data"""
+    return gzip.decompress(data)
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
@@ -254,8 +295,13 @@ class handler(BaseHTTPRequestHandler):
             text = ''
             source_type = 'unknown'
 
+            # Check if data is gzip compressed and decompress
+            if is_gzip(body):
+                body = decompress_gzip(body)
+                source_type = 'gzip+'
+
             # Determine input type and extract text
-            if 'application/json' in content_type:
+            if 'application/json' in content_type and not source_type.startswith('gzip'):
                 # JSON with text field
                 data = json.loads(body.decode('utf-8'))
                 text = data.get('text', '')
@@ -263,15 +309,15 @@ class handler(BaseHTTPRequestHandler):
             elif is_pdf(body):
                 # PDF file - extract text
                 text = extract_text_from_pdf(body)
-                source_type = 'pdf'
+                source_type = source_type + 'pdf' if source_type.startswith('gzip') else 'pdf'
             elif is_zip(body):
                 # ZIP file with TXT files
                 text = extract_text_from_zip(body)
-                source_type = 'zip'
+                source_type = source_type + 'zip' if source_type.startswith('gzip') else 'zip'
             else:
                 # Plain text
                 text = body.decode('utf-8', errors='ignore')
-                source_type = 'text'
+                source_type = source_type + 'text' if source_type.startswith('gzip') else 'text'
 
             # Parse the text
             parser = ItineraryParser()
