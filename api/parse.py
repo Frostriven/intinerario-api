@@ -273,9 +273,44 @@ def is_gzip(data: bytes) -> bool:
     return data[:2] == b'\x1f\x8b'
 
 
+def is_zlib(data: bytes) -> bool:
+    """Check if data is zlib compressed (CMF byte check)"""
+    if len(data) < 2:
+        return False
+    # zlib header: CMF (usually 0x78) + FLG
+    cmf = data[0]
+    flg = data[1]
+    # Check if CMF indicates deflate compression
+    if cmf & 0x0F == 8:  # Compression method 8 = deflate
+        # Verify checksum: (CMF * 256 + FLG) % 31 == 0
+        if (cmf * 256 + flg) % 31 == 0:
+            return True
+    return False
+
+
+def is_raw_deflate(content_type: str) -> bool:
+    """Check if Content-Type indicates raw deflate (iOS Compression framework format)"""
+    # iOS's COMPRESSION_ZLIB produces raw deflate without zlib header
+    # We detect this by Content-Type header
+    return 'application/zlib' in content_type or 'application/deflate' in content_type
+
+
 def decompress_gzip(data: bytes) -> bytes:
     """Decompress gzip data"""
     return gzip.decompress(data)
+
+
+def decompress_zlib(data: bytes) -> bytes:
+    """Decompress zlib data"""
+    import zlib
+    return zlib.decompress(data)
+
+
+def decompress_raw_deflate(data: bytes) -> bytes:
+    """Decompress raw deflate data (iOS Compression framework format)"""
+    import zlib
+    # wbits=-15 tells zlib to expect raw deflate without header
+    return zlib.decompress(data, wbits=-15)
 
 
 class handler(BaseHTTPRequestHandler):
@@ -295,13 +330,22 @@ class handler(BaseHTTPRequestHandler):
             text = ''
             source_type = 'unknown'
 
-            # Check if data is gzip compressed and decompress
+            # Check if data is compressed and decompress
             if is_gzip(body):
                 body = decompress_gzip(body)
                 source_type = 'gzip+'
+            elif is_zlib(body):
+                body = decompress_zlib(body)
+                source_type = 'zlib+'
+            elif 'application/zlib' in content_type or 'application/deflate' in content_type:
+                # iOS Compression framework sends raw deflate with this Content-Type
+                body = decompress_raw_deflate(body)
+                source_type = 'deflate+'
 
             # Determine input type and extract text
-            if 'application/json' in content_type and not source_type.startswith('gzip'):
+            compressed_prefix = source_type if source_type.endswith('+') else ''
+
+            if 'application/json' in content_type and not compressed_prefix:
                 # JSON with text field
                 data = json.loads(body.decode('utf-8'))
                 text = data.get('text', '')
@@ -309,15 +353,15 @@ class handler(BaseHTTPRequestHandler):
             elif is_pdf(body):
                 # PDF file - extract text
                 text = extract_text_from_pdf(body)
-                source_type = source_type + 'pdf' if source_type.startswith('gzip') else 'pdf'
+                source_type = compressed_prefix + 'pdf'
             elif is_zip(body):
                 # ZIP file with TXT files
                 text = extract_text_from_zip(body)
-                source_type = source_type + 'zip' if source_type.startswith('gzip') else 'zip'
+                source_type = compressed_prefix + 'zip'
             else:
                 # Plain text
                 text = body.decode('utf-8', errors='ignore')
-                source_type = source_type + 'text' if source_type.startswith('gzip') else 'text'
+                source_type = compressed_prefix + 'text' if compressed_prefix else 'text'
 
             # Parse the text
             parser = ItineraryParser()
