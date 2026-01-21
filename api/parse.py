@@ -5,6 +5,20 @@ import zipfile
 import io
 from typing import Optional, List, Dict
 
+# PDF extraction - try multiple libraries
+try:
+    from PyPDF2 import PdfReader
+    HAS_PYPDF2 = True
+except ImportError:
+    HAS_PYPDF2 = False
+
+try:
+    import pdfplumber
+    HAS_PDFPLUMBER = True
+except ImportError:
+    HAS_PDFPLUMBER = False
+
+
 class ItineraryParser:
     COLUMN_NAMES = [
         'status', 'vuelo', 'origen', 'salida1', 'escala1', 'llegada1',
@@ -167,7 +181,9 @@ class ItineraryParser:
 
         return flights
 
+
 def extract_text_from_zip(zip_data: bytes) -> str:
+    """Extract text from ZIP file containing TXT files"""
     all_text = []
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         txt_files = sorted(
@@ -178,6 +194,48 @@ def extract_text_from_zip(zip_data: bytes) -> str:
             content = zf.read(txt_file).decode('utf-8', errors='ignore')
             all_text.append(content)
     return '\n'.join(all_text)
+
+
+def extract_text_from_pdf(pdf_data: bytes) -> str:
+    """Extract text from PDF using available library"""
+    # Try pdfplumber first (better text extraction)
+    if HAS_PDFPLUMBER:
+        try:
+            all_text = []
+            with pdfplumber.open(io.BytesIO(pdf_data)) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        all_text.append(text)
+            return '\n'.join(all_text)
+        except Exception:
+            pass  # Fall through to PyPDF2
+
+    # Try PyPDF2
+    if HAS_PYPDF2:
+        try:
+            all_text = []
+            reader = PdfReader(io.BytesIO(pdf_data))
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    all_text.append(text)
+            return '\n'.join(all_text)
+        except Exception:
+            pass
+
+    raise ValueError("No PDF library available or PDF extraction failed")
+
+
+def is_pdf(data: bytes) -> bool:
+    """Check if data is a PDF file"""
+    return data[:4] == b'%PDF'
+
+
+def is_zip(data: bytes) -> bool:
+    """Check if data is a ZIP file"""
+    return data[:4] == b'PK\x03\x04'
+
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -193,18 +251,39 @@ class handler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length)
             content_type = self.headers.get('Content-Type', '')
 
+            text = ''
+            source_type = 'unknown'
+
+            # Determine input type and extract text
             if 'application/json' in content_type:
+                # JSON with text field
                 data = json.loads(body.decode('utf-8'))
                 text = data.get('text', '')
-            elif body[:4] == b'PK\x03\x04':
+                source_type = 'json'
+            elif is_pdf(body):
+                # PDF file - extract text
+                text = extract_text_from_pdf(body)
+                source_type = 'pdf'
+            elif is_zip(body):
+                # ZIP file with TXT files
                 text = extract_text_from_zip(body)
+                source_type = 'zip'
             else:
+                # Plain text
                 text = body.decode('utf-8', errors='ignore')
+                source_type = 'text'
 
+            # Parse the text
             parser = ItineraryParser()
             flights = parser.parse_text(text)
 
-            response = {'success': True, 'total': len(flights), 'flights': flights}
+            response = {
+                'success': True,
+                'total': len(flights),
+                'flights': flights,
+                'source': source_type,
+                'textLength': len(text)
+            }
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -221,7 +300,17 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode('utf-8'))
 
     def do_GET(self):
-        response = {'status': 'ok', 'service': 'Itinerary Parser API', 'version': '2.0'}
+        response = {
+            'status': 'ok',
+            'service': 'Itinerary Parser API',
+            'version': '2.1',
+            'capabilities': {
+                'pdf': HAS_PYPDF2 or HAS_PDFPLUMBER,
+                'zip': True,
+                'text': True,
+                'json': True
+            }
+        }
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
