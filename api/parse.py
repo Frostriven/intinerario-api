@@ -67,7 +67,6 @@ class ItineraryParser:
         result = {col: '' for col in self.COLUMN_NAMES}
         idx = 0
         
-        # 1. STATUS
         if tokens[idx] in ['A', 'C', '-']:
             if tokens[idx] in ['A', 'C']:
                 result['status'] = tokens[idx]
@@ -76,7 +75,6 @@ class ItineraryParser:
         if idx >= len(tokens):
             return None
         
-        # 2. VUELO
         if re.match(r'^\d+$', tokens[idx]):
             result['vuelo'] = tokens[idx]
             idx += 1
@@ -86,7 +84,6 @@ class ItineraryParser:
         if idx >= len(tokens):
             return None
         
-        # 3-12. SEGMENTOS DE VUELO
         boundary = self._find_section_boundary(tokens, idx)
         flight_tokens = tokens[idx:boundary]
         
@@ -129,7 +126,6 @@ class ItineraryParser:
             if segments[3]['times']:
                 result['llegada3'] = segments[3]['times'][0]
         
-        # 13-21. FRECUENCIAS Y FECHAS
         day_fields = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
         day_idx = 0
         dates = []
@@ -152,6 +148,8 @@ class ItineraryParser:
         flights = []
         skip_patterns = ['S VLO', 'EFECTIVIDAD', 'ITINERARIOS', 'Emisión', 
                         'EMISIÓN', 'UTC', 'Notas:', 'información']
+        
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
         
         for line in text.split('\n'):
             line = line.strip()
@@ -224,7 +222,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode('utf-8'))
     
     def do_GET(self):
-        response = {'status': 'ok', 'service': 'Itinerary Parser API', 'version': '2.0'}
+        response = {'status': 'ok', 'service': 'Itinerary Parser API', 'version': '2.1'}
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
