@@ -33,33 +33,27 @@ class ItineraryParser:
     
     @staticmethod
     def is_frequency(token: str) -> bool:
-        return bool(re.match(r'^[0-9]$', token))  # Cambiado: 0-9 en vez de 0-7
-    
-    @staticmethod
-    def is_equipment_code(token: str) -> bool:
-        """Verifica si es un código de equipo válido (0-14)"""
-        if not re.match(r'^\d{1,2}$', token):
-            return False
-        return 0 <= int(token) <= 14
+        return bool(re.match(r'^[0-7]$', token))
     
     def _find_section_boundary(self, tokens: List[str], start_idx: int) -> int:
         i = start_idx
         while i < len(tokens):
             token = tokens[i]
-            # Buscar inicio de sección de frecuencias/equipos
-            if self.is_equipment_code(token):
+            if self.is_frequency(token):
                 if i > start_idx:
                     lookahead = i
                     freq_count = 0
                     while lookahead < len(tokens) and (
-                        self.is_equipment_code(tokens[lookahead]) or 
+                        self.is_frequency(tokens[lookahead]) or 
                         self.is_date(tokens[lookahead])
                     ):
-                        if self.is_equipment_code(tokens[lookahead]):
+                        if self.is_frequency(tokens[lookahead]):
                             freq_count += 1
                         lookahead += 1
-                    if freq_count >= 1:  # Cambiado: >= 1 en vez de >= 2
+                    if freq_count >= 2:
                         return i
+                else:
+                    return i
             if self.is_date(token):
                 return i
             i += 1
@@ -141,7 +135,7 @@ class ItineraryParser:
         dates = []
         
         for token in tokens[boundary:]:
-            if self.is_equipment_code(token) and day_idx < 7:
+            if self.is_frequency(token) and day_idx < 7:
                 result[day_fields[day_idx]] = token
                 day_idx += 1
             elif self.is_date(token):
@@ -157,7 +151,7 @@ class ItineraryParser:
     def parse_text(self, text: str) -> List[Dict]:
         flights = []
         skip_patterns = ['S VLO', 'EFECTIVIDAD', 'ITINERARIOS', 'Emisión', 
-                        'EMISIÓN', 'UTC', 'Notas:', 'información', 'AEROMEXICO']
+                        'EMISIÓN', 'UTC', 'Notas:', 'información']
         
         for line in text.split('\n'):
             line = line.strip()
@@ -167,9 +161,7 @@ class ItineraryParser:
                 continue
             if re.match(r'^\s*\d{1,3}\s*$', line):
                 continue
-            
-            # REGEX CORREGIDO: Solo requiere numero de vuelo + aeropuerto
-            if re.match(r'^\s*[AC\-]?\s*\d+\s+[A-Z]{3}', line):
+            if re.match(r'^\s*[AC\s]?\s*\d+\s+[A-Z]{3}\s+\d+', line):
                 parsed = self.parse_line(line)
                 if parsed and parsed['vuelo']:
                     flights.append(parsed)
@@ -232,7 +224,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode('utf-8'))
     
     def do_GET(self):
-        response = {'status': 'ok', 'service': 'Itinerary Parser API', 'version': '2.1'}
+        response = {'status': 'ok', 'service': 'Itinerary Parser API', 'version': '2.0'}
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
