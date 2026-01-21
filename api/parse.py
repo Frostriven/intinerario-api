@@ -50,10 +50,26 @@ class ItineraryParser:
         return bool(re.match(r'^[0-7]$', token))
 
     def _find_section_boundary(self, tokens: List[str], start_idx: int) -> int:
+        """
+        Encuentra el límite entre la sección de segmentos de vuelo y la sección de frecuencias/fechas.
+        MEJORADO: Requiere al menos 2 aeropuertos antes de considerar frecuencias.
+        """
         i = start_idx
+        airport_count = 0
+
         while i < len(tokens):
             token = tokens[i]
-            if self.is_frequency(token):
+
+            # Contar aeropuertos encontrados
+            if self.is_airport(token):
+                airport_count += 1
+            # También contar si es un token concatenado número+aeropuerto
+            elif re.match(r'^(\d{2,4})([A-Z]{3})$', token):
+                airport_count += 1
+
+            # Solo buscar frecuencias si ya encontramos al menos 2 aeropuertos
+            # (origen + destino mínimo)
+            if self.is_frequency(token) and airport_count >= 2:
                 if i > start_idx:
                     lookahead = i
                     freq_count = 0
@@ -68,9 +84,13 @@ class ItineraryParser:
                         return i
                 else:
                     return i
-            if self.is_date(token):
+
+            # Si encontramos una fecha Y ya tenemos al menos 2 aeropuertos, parar
+            if self.is_date(token) and airport_count >= 2:
                 return i
+
             i += 1
+
         return len(tokens)
 
     def parse_line(self, line: str) -> Optional[Dict]:
@@ -146,6 +166,15 @@ class ItineraryParser:
             else:
                 seg_idx += 1
 
+        # DEBUG: Log problematic lines with only 1 segment
+        if len(segments) == 1 and result.get('vuelo'):
+            import sys
+            print(f"[DEBUG] Vuelo {result['vuelo']} con solo 1 segmento:", file=sys.stderr)
+            print(f"  Line: {line[:100]}...", file=sys.stderr)
+            print(f"  Tokens: {tokens}", file=sys.stderr)
+            print(f"  Boundary: {boundary}, flight_tokens: {flight_tokens}", file=sys.stderr)
+            print(f"  Segments: {segments}", file=sys.stderr)
+
         if len(segments) >= 1:
             result['origen'] = segments[0]['airport']
             if segments[0]['times']:
@@ -169,6 +198,20 @@ class ItineraryParser:
             result['destino'] = segments[3]['airport']
             if segments[3]['times']:
                 result['llegada3'] = segments[3]['times'][0]
+
+        # FIX: Si solo hay 1 segmento, buscar el destino en los tokens después del boundary
+        # Algunos vuelos tienen el destino mezclado con los días de frecuencia
+        if len(segments) == 1 and result.get('origen'):
+            # Buscar un aeropuerto en los tokens restantes (antes de las fechas)
+            remaining_tokens = tokens[boundary:]
+            for i, token in enumerate(remaining_tokens):
+                if self.is_airport(token):
+                    # Encontrado un aeropuerto - usarlo como destino
+                    result['escala1'] = token
+                    # Buscar tiempo de llegada antes de este aeropuerto
+                    if i > 0 and self.is_time(remaining_tokens[i-1]):
+                        result['llegada1'] = remaining_tokens[i-1]
+                    break
 
         # 13-21. FRECUENCIAS Y FECHAS
         day_fields = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
