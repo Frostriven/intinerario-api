@@ -1,0 +1,2 @@
+# No se necesitan dependencias externas
+# El parser usa solo librerías estándar de Python
