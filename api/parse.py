@@ -31,15 +31,10 @@ def clean_spaced_numbers(text: str) -> str:
 
 def extract_metadata(text: str) -> Dict:
     """
-    Extrae metadatos del itinerario.
-    Busca en dos formatos:
+    Extrae metadatos del itinerario usando SOLO el formato del pie de página.
+    Formato: "Emisión 02/26 Del 26 de enero 2026 al 22 de febrero 2026"
 
-    Formato 1 (encabezado):
-    - EMISIÓN: 01/26 VIGENCIA: 29-DIC-2025 al 25-ENE-2026
-    - FECHA: 23-DIC-2025
-
-    Formato 2 (pie de página):
-    - Emisión 02/26 Del 26 de enero 2026 al 22 de febrero 2026.
+    Este formato es más confiable porque está presente en todas las páginas.
     """
     metadata = {
         'codigoEmision': '',
@@ -51,63 +46,37 @@ def extract_metadata(text: str) -> Dict:
     # Limpiar espacios en números del texto
     clean_text = clean_spaced_numbers(text)
 
-    # ========== FORMATO 1: Encabezado ==========
-    # Solo buscar en las primeras líneas
-    header_lines = clean_text[:3000]
-
-    # Buscar EMISIÓN: XX/XX
-    emision_match = re.search(r'EMISI[OÓ]N[:\s]+(\d{2}/\d{2})', header_lines, re.IGNORECASE)
-    if emision_match:
-        metadata['codigoEmision'] = emision_match.group(1)
-
-    # Buscar VIGENCIA: DD-MMM-YYYY al DD-MMM-YYYY
-    vigencia_match = re.search(
-        r'VIGENCIA[:\s]+(\d{1,2}-[A-Z]{3}-\d{4})\s+al\s+(\d{1,2}-[A-Z]{3}-\d{4})',
-        header_lines, re.IGNORECASE
-    )
-    if vigencia_match:
-        metadata['vigenciaInicio'] = vigencia_match.group(1).upper()
-        metadata['vigenciaFin'] = vigencia_match.group(2).upper()
-
-    # Buscar FECHA: DD-MMM-YYYY
-    fecha_match = re.search(r'FECHA[:\s]+(\d{1,2}-[A-Z]{3}-\d{4})', header_lines, re.IGNORECASE)
-    if fecha_match:
-        metadata['fechaEmision'] = fecha_match.group(1).upper()
-
-    # ========== FORMATO 2: Pie de página ==========
-    # Si no encontramos código de emisión, buscar en formato alternativo
+    # Buscar formato de pie de página:
     # "Emisión 02/26 Del 26 de enero 2026 al 22 de febrero 2026"
-    if not metadata['codigoEmision']:
-        # Buscar en todo el texto (puede estar en cualquier página)
-        footer_match = re.search(
-            r'Emisi[oó]n\s+(\d{2}/\d{2})\s+Del\s+(\d{1,2})\s+de\s+([a-zA-Z]+)\s+(\d{4})\s+al\s+(\d{1,2})\s+de\s+([a-zA-Z]+)\s+(\d{4})',
-            clean_text, re.IGNORECASE
-        )
-        if footer_match:
-            metadata['codigoEmision'] = footer_match.group(1)
+    footer_match = re.search(
+        r'Emisi[oó]n\s+(\d{2}/\d{2})\s+Del\s+(\d{1,2})\s+de\s+([a-zA-Z]+)\s+(\d{4})\s+al\s+(\d{1,2})\s+de\s+([a-zA-Z]+)\s+(\d{4})',
+        clean_text, re.IGNORECASE
+    )
 
-            # Convertir mes en español a formato corto
-            month_map = {
-                'enero': 'ENE', 'febrero': 'FEB', 'marzo': 'MAR', 'abril': 'ABR',
-                'mayo': 'MAY', 'junio': 'JUN', 'julio': 'JUL', 'agosto': 'AGO',
-                'septiembre': 'SEP', 'octubre': 'OCT', 'noviembre': 'NOV', 'diciembre': 'DIC'
-            }
+    if footer_match:
+        metadata['codigoEmision'] = footer_match.group(1)
 
-            # Fecha inicio: "26 de enero 2026" -> "26-ENE-2026"
-            day_start = footer_match.group(2)
-            month_start = month_map.get(footer_match.group(3).lower(), footer_match.group(3)[:3].upper())
-            year_start = footer_match.group(4)
-            metadata['vigenciaInicio'] = f"{day_start}-{month_start}-{year_start}"
+        # Convertir mes en español a formato corto
+        month_map = {
+            'enero': 'ENE', 'febrero': 'FEB', 'marzo': 'MAR', 'abril': 'ABR',
+            'mayo': 'MAY', 'junio': 'JUN', 'julio': 'JUL', 'agosto': 'AGO',
+            'septiembre': 'SEP', 'octubre': 'OCT', 'noviembre': 'NOV', 'diciembre': 'DIC'
+        }
 
-            # Fecha fin: "22 de febrero 2026" -> "22-FEB-2026"
-            day_end = footer_match.group(5)
-            month_end = month_map.get(footer_match.group(6).lower(), footer_match.group(6)[:3].upper())
-            year_end = footer_match.group(7)
-            metadata['vigenciaFin'] = f"{day_end}-{month_end}-{year_end}"
+        # Fecha inicio: "26 de enero 2026" -> "26-ENE-2026"
+        day_start = footer_match.group(2)
+        month_start = month_map.get(footer_match.group(3).lower(), footer_match.group(3)[:3].upper())
+        year_start = footer_match.group(4)
+        metadata['vigenciaInicio'] = f"{day_start}-{month_start}-{year_start}"
 
-            # Usar fecha de inicio como fecha de emisión si no tenemos otra
-            if not metadata['fechaEmision']:
-                metadata['fechaEmision'] = metadata['vigenciaInicio']
+        # Fecha fin: "22 de febrero 2026" -> "22-FEB-2026"
+        day_end = footer_match.group(5)
+        month_end = month_map.get(footer_match.group(6).lower(), footer_match.group(6)[:3].upper())
+        year_end = footer_match.group(7)
+        metadata['vigenciaFin'] = f"{day_end}-{month_end}-{year_end}"
+
+        # Usar fecha de inicio como fecha de emisión
+        metadata['fechaEmision'] = metadata['vigenciaInicio']
 
     return metadata
 
