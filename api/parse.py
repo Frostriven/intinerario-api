@@ -20,6 +20,46 @@ except ImportError:
     HAS_PDFPLUMBER = False
 
 
+def extract_metadata(text: str) -> Dict:
+    """
+    Extrae metadatos del encabezado del itinerario.
+    Busca patrones como:
+    - EMISIÓN: 01/26
+    - VIGENCIA: 29-DIC-2025 al 25-ENE-2026
+    - FECHA: 23-DIC-2025
+    """
+    metadata = {
+        'codigoEmision': '',
+        'fechaEmision': '',
+        'vigenciaInicio': '',
+        'vigenciaFin': ''
+    }
+
+    # Solo buscar en las primeras líneas (encabezado)
+    header_lines = text[:2000]  # Primeros 2000 caracteres
+
+    # Buscar EMISIÓN: XX/XX
+    emision_match = re.search(r'EMISI[OÓ]N[:\s]+(\d{2}/\d{2})', header_lines, re.IGNORECASE)
+    if emision_match:
+        metadata['codigoEmision'] = emision_match.group(1)
+
+    # Buscar VIGENCIA: DD-MMM-YYYY al DD-MMM-YYYY
+    vigencia_match = re.search(
+        r'VIGENCIA[:\s]+(\d{1,2}-[A-Z]{3}-\d{4})\s+al\s+(\d{1,2}-[A-Z]{3}-\d{4})',
+        header_lines, re.IGNORECASE
+    )
+    if vigencia_match:
+        metadata['vigenciaInicio'] = vigencia_match.group(1).upper()
+        metadata['vigenciaFin'] = vigencia_match.group(2).upper()
+
+    # Buscar FECHA: DD-MMM-YYYY (fecha de emisión del documento)
+    fecha_match = re.search(r'FECHA[:\s]+(\d{1,2}-[A-Z]{3}-\d{4})', header_lines, re.IGNORECASE)
+    if fecha_match:
+        metadata['fechaEmision'] = fecha_match.group(1).upper()
+
+    return metadata
+
+
 class ItineraryParser:
     COLUMN_NAMES = [
         'status', 'vuelo', 'origen', 'salida1', 'escala1', 'llegada1',
@@ -406,6 +446,9 @@ class handler(BaseHTTPRequestHandler):
                 text = body.decode('utf-8', errors='ignore')
                 source_type = compressed_prefix + 'text' if compressed_prefix else 'text'
 
+            # Extract metadata from header
+            metadata = extract_metadata(text)
+
             # Parse the text
             parser = ItineraryParser()
             flights = parser.parse_text(text)
@@ -415,7 +458,8 @@ class handler(BaseHTTPRequestHandler):
                 'total': len(flights),
                 'flights': flights,
                 'source': source_type,
-                'textLength': len(text)
+                'textLength': len(text),
+                'metadata': metadata
             }
 
             self.send_response(200)
