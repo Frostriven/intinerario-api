@@ -297,7 +297,7 @@ class ItineraryParser:
         if len(frequencies) > 0 and len(frequencies) <= 7:
             if self.day_column_positions and len(frequencies) < 7:
                 # Usar posiciones calibradas del encabezado
-                assigned = self._assign_frequencies_by_position(line, frequencies, day_fields)
+                assigned = self._assign_frequencies_by_position(line, day_fields)
                 for day, freq in assigned.items():
                     result[day] = freq
             elif len(frequencies) == 7:
@@ -377,7 +377,7 @@ class ItineraryParser:
         # Si no encontramos el encabezado, usar posiciones por defecto
         self.day_column_positions = None
 
-    def _assign_frequencies_by_position(self, line: str, frequencies: List[str], day_fields: List[str]) -> Dict[str, str]:
+    def _assign_frequencies_by_position(self, line: str, day_fields: List[str]) -> Dict[str, str]:
         """
         Asigna frecuencias a días basándose en la posición de los caracteres en la línea.
         Compara la posición de cada frecuencia con las posiciones calibradas del encabezado.
@@ -387,17 +387,22 @@ class ItineraryParser:
         if not self.day_column_positions:
             return result
 
-        # Encontrar la posición de cada frecuencia en la línea original
-        freq_positions = []
-        search_start = 0
+        # Obtener el rango donde deberían estar las frecuencias
+        # (cerca de las posiciones de columna de días)
+        first_day_pos = self.day_column_positions[0]
+        last_day_pos = self.day_column_positions[6]
 
-        # Buscar cada frecuencia en orden de aparición
-        for freq in frequencies:
-            # Buscar el dígito de frecuencia (0-7) en la línea
-            pos = line.find(freq, search_start)
-            if pos != -1:
-                freq_positions.append((pos, freq))
-                search_start = pos + 1
+        # Buscar solo en el área de frecuencias (con margen)
+        search_start = max(0, first_day_pos - 3)
+        search_end = min(len(line), last_day_pos + 3)
+
+        # Encontrar todos los dígitos aislados (0-7) en el área de frecuencias
+        # Un dígito aislado está rodeado por espacios o al inicio/final del área
+        freq_positions = []
+        for match in re.finditer(r'(?:^|(?<=\s))([0-7])(?=\s|$)', line[search_start:search_end]):
+            pos = search_start + match.start(1)
+            freq = match.group(1)
+            freq_positions.append((pos, freq))
 
         # Para cada frecuencia encontrada, determinar a qué día pertenece
         for pos, freq in freq_positions:
@@ -411,8 +416,8 @@ class ItineraryParser:
                     min_distance = distance
                     best_day_idx = day_idx
 
-            # Asignar al día más cercano si la distancia es razonable (< 5 caracteres)
-            if best_day_idx >= 0 and min_distance < 5:
+            # Asignar al día más cercano si la distancia es razonable
+            if best_day_idx >= 0 and min_distance < 4:
                 result[day_fields[best_day_idx]] = freq
 
         return result
