@@ -276,21 +276,102 @@ class ItineraryParser:
                     break
 
         # 13-21. FRECUENCIAS Y FECHAS
+        # Usar posiciones de columna para asignar días correctamente
         day_fields = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
-        day_idx = 0
         dates = []
 
-        for token in tokens[boundary:]:
-            if self.is_frequency(token) and day_idx < 7:
-                result[day_fields[day_idx]] = token
-                day_idx += 1
+        # Recolectar frecuencias y fechas de los tokens restantes
+        remaining_tokens = tokens[boundary:]
+        frequencies = []
+        for token in remaining_tokens:
+            if self.is_frequency(token):
+                frequencies.append(token)
             elif self.is_date(token):
                 dates.append(token)
+
+        # Asignar frecuencias a días
+        # Si hay exactamente 7 frecuencias, asignar en orden L-D
+        # Si hay menos, necesitamos inferir posiciones basándonos en la línea original
+        if len(frequencies) == 7:
+            for i, freq in enumerate(frequencies):
+                result[day_fields[i]] = freq
+        elif len(frequencies) > 0 and len(frequencies) < 7:
+            # Buscar las posiciones de las frecuencias en la línea original
+            # para determinar a qué día corresponden
+            freq_positions = self._find_frequency_positions(line, frequencies, dates)
+            for day_idx, freq in freq_positions:
+                if 0 <= day_idx < 7:
+                    result[day_fields[day_idx]] = freq
 
         if len(dates) >= 1:
             result['fechaInicio'] = dates[0]
         if len(dates) >= 2:
             result['fechaFin'] = dates[1]
+
+        return result
+
+    def _find_frequency_positions(self, line: str, frequencies: List[str], dates: List[str]) -> List[tuple]:
+        """
+        Encuentra las posiciones de columna de las frecuencias en la línea.
+        Retorna lista de tuplas (day_index, frequency_value).
+
+        El formato típico tiene 7 columnas para días (L M M J V S D) antes de las fechas.
+        Cada columna tiene ~2-3 caracteres de ancho.
+        """
+        result = []
+
+        # Encontrar dónde empiezan las fechas en la línea
+        date_start = len(line)
+        for date in dates:
+            pos = line.find(date)
+            if pos != -1 and pos < date_start:
+                date_start = pos
+
+        # La sección de días está antes de las fechas
+        # Buscar cada frecuencia en esa sección
+        days_section = line[:date_start]
+
+        # Encontrar dónde terminan los datos del vuelo (último aeropuerto o tiempo)
+        # Buscar el último patrón de tiempo (4 dígitos) o aeropuerto (3 letras) antes de las frecuencias
+        last_flight_data = 0
+        for match in re.finditer(r'\b(\d{3,4}|[A-Z]{3})\b', days_section):
+            # Verificar que no sea una frecuencia (1 dígito)
+            if len(match.group()) > 1:
+                last_flight_data = match.end()
+
+        # La sección de frecuencias va desde last_flight_data hasta date_start
+        freq_section = line[last_flight_data:date_start]
+
+        # Si la sección de frecuencias es muy corta, usar método simple
+        if len(freq_section.strip()) < 3:
+            # Solo hay una frecuencia, probablemente
+            for i, freq in enumerate(frequencies):
+                result.append((i, freq))
+            return result
+
+        # Calcular el ancho aproximado de cada columna de día
+        # Típicamente hay 7 columnas en ~14-21 caracteres
+        section_width = len(freq_section)
+        col_width = max(2, section_width // 7)
+
+        # Para cada frecuencia, encontrar su posición en la sección y calcular el día
+        for freq in frequencies:
+            # Buscar la frecuencia en la sección (como dígito aislado)
+            pattern = r'(?<![0-9])' + freq + r'(?![0-9])'
+            for match in re.finditer(pattern, freq_section):
+                pos_in_section = match.start()
+                # Calcular a qué día corresponde basándose en la posición
+                day_idx = min(6, pos_in_section // col_width)
+                result.append((day_idx, freq))
+                break
+
+        # Si no se encontraron posiciones, usar método de respaldo
+        if not result:
+            # Asumir que las frecuencias van de derecha a izquierda (domingo primero si hay una sola)
+            for i, freq in enumerate(reversed(frequencies)):
+                day_idx = 6 - i  # Empezar desde domingo (6) hacia atrás
+                result.append((day_idx, freq))
+            result.reverse()
 
         return result
 
