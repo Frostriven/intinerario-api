@@ -379,46 +379,29 @@ class ItineraryParser:
 
     def _assign_frequencies_by_position(self, line: str, day_fields: List[str]) -> Dict[str, str]:
         """
-        Asigna frecuencias a días basándose en la posición de los caracteres en la línea.
-        Compara la posición de cada frecuencia con las posiciones calibradas del encabezado.
+        Asigna frecuencias a días revisando directamente cada columna.
+        Para cada día, busca si hay un dígito en esa posición de la línea.
         """
         result = {}
 
         if not self.day_column_positions:
             return result
 
-        # Obtener el rango donde deberían estar las frecuencias
-        # (cerca de las posiciones de columna de días)
-        first_day_pos = self.day_column_positions[0]
-        last_day_pos = self.day_column_positions[6]
+        # Para cada día, revisar si hay un dígito (1-7) en su columna
+        # Usamos una ventana de ±2 caracteres alrededor de la posición del encabezado
+        for day_idx, day_pos in enumerate(self.day_column_positions):
+            # Definir ventana de búsqueda para esta columna
+            start = max(0, day_pos - 2)
+            end = min(len(line), day_pos + 3)
 
-        # Buscar solo en el área de frecuencias (con margen)
-        search_start = max(0, first_day_pos - 3)
-        search_end = min(len(line), last_day_pos + 3)
+            # Extraer el segmento de la línea para esta columna
+            segment = line[start:end]
 
-        # Encontrar todos los dígitos aislados (0-7) en el área de frecuencias
-        # Un dígito aislado está rodeado por espacios o al inicio/final del área
-        freq_positions = []
-        for match in re.finditer(r'(?:^|(?<=\s))([0-7])(?=\s|$)', line[search_start:search_end]):
-            pos = search_start + match.start(1)
-            freq = match.group(1)
-            freq_positions.append((pos, freq))
-
-        # Para cada frecuencia encontrada, determinar a qué día pertenece
-        for pos, freq in freq_positions:
-            best_day_idx = -1
-            min_distance = float('inf')
-
-            # Encontrar la columna de día más cercana a esta posición
-            for day_idx, day_pos in enumerate(self.day_column_positions):
-                distance = abs(pos - day_pos)
-                if distance < min_distance:
-                    min_distance = distance
-                    best_day_idx = day_idx
-
-            # Asignar al día más cercano si la distancia es razonable
-            if best_day_idx >= 0 and min_distance < 4:
-                result[day_fields[best_day_idx]] = freq
+            # Buscar un dígito 1-7 (frecuencia activa) en el segmento
+            # No buscamos 0 porque 0 significa "no opera"
+            match = re.search(r'[1-7]', segment)
+            if match:
+                result[day_fields[day_idx]] = match.group(0)
 
         return result
 
