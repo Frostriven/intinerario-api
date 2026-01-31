@@ -298,18 +298,17 @@ class ItineraryParser:
             elif self.is_date(token):
                 dates.append(token)
 
-        # Asignar frecuencias a días usando posiciones de columna
+        # Asignar códigos de equipo a días
         if len(frequencies) > 0 and len(frequencies) <= 7:
-            if self.day_column_positions and len(frequencies) < 7:
-                # Usar posiciones calibradas del encabezado
-                assigned = self._assign_frequencies_by_position(line, day_fields)
-                for day, freq in assigned.items():
-                    result[day] = freq
-            elif len(frequencies) == 7:
+            if len(frequencies) == 7:
                 # 7 códigos = todos los días en orden
-                # Todos los códigos son válidos (0-14)
                 for i, freq in enumerate(frequencies):
                     result[day_fields[i]] = freq
+            elif len(frequencies) >= 1 and self.day_column_positions:
+                # Usar posiciones calibradas, pero validar que coincida con tokens
+                assigned = self._assign_frequencies_by_position(line, day_fields, frequencies)
+                for day, freq in assigned.items():
+                    result[day] = freq
             else:
                 # Fallback: alinear a la derecha (hacia domingo)
                 start_idx = 7 - len(frequencies)
@@ -383,23 +382,22 @@ class ItineraryParser:
         # Si no encontramos el encabezado, usar posiciones por defecto
         self.day_column_positions = None
 
-    def _assign_frequencies_by_position(self, line: str, day_fields: List[str]) -> Dict[str, str]:
+    def _assign_frequencies_by_position(self, line: str, day_fields: List[str], expected_frequencies: List[str]) -> Dict[str, str]:
         """
         Asigna códigos de equipo a días revisando directamente cada columna.
-        Los códigos pueden ser de 1 o 2 dígitos (0-14).
-        -1 = no opera, 0-14 = código de equipo válido.
+        Solo devuelve resultados si la cantidad encontrada coincide con expected_frequencies.
         """
         result = {}
 
         if not self.day_column_positions:
             return result
 
+        found_codes = []
+
         # Para cada día, buscar código de equipo en su columna
         for day_idx, day_pos in enumerate(self.day_column_positions):
-            found = False
-
-            # Buscar en una ventana alrededor de la posición del día
-            for offset in [0, -1, 1, -2, 2]:
+            # Buscar SOLO en la posición exacta (±1 máximo)
+            for offset in [0, -1, 1]:
                 pos = day_pos + offset
                 if pos < 0 or pos >= len(line):
                     continue
@@ -415,19 +413,25 @@ class ItineraryParser:
                     if char == '1' and next_char.isdigit() and not prev_char.isdigit():
                         two_digit = char + next_char
                         if two_digit in ['10', '11', '12', '13', '14']:
-                            result[day_fields[day_idx]] = two_digit
-                            found = True
+                            found_codes.append((day_fields[day_idx], two_digit))
                             break
                     # Si es un dígito aislado (no parte de un número mayor)
                     elif not prev_char.isdigit() and not next_char.isdigit():
-                        # Guardar el código (0-9 son válidos)
-                        result[day_fields[day_idx]] = char
-                        found = True
+                        found_codes.append((day_fields[day_idx], char))
                         break
 
-            # Si no encontramos código para este día, poner -1
-            if not found:
-                result[day_fields[day_idx]] = '-1'
+        # Validar: solo usar si encontramos aprox la misma cantidad que los tokens
+        # Permitir margen de ±1 por posibles diferencias de extracción
+        if abs(len(found_codes) - len(expected_frequencies)) <= 1:
+            for day, code in found_codes:
+                result[day] = code
+        else:
+            # Fallback: usar tokens con alineación a la derecha
+            start_idx = 7 - len(expected_frequencies)
+            for i, freq in enumerate(expected_frequencies):
+                day_idx = start_idx + i
+                if 0 <= day_idx < 7:
+                    result[day_fields[day_idx]] = freq
 
         return result
 
