@@ -436,6 +436,173 @@ class ItineraryParser:
         return result
 
 
+def parse_table_row(row: List[str], day_fields: List[str]) -> Optional[Dict]:
+    """
+    Parsea una fila de tabla extraída por pdfplumber.
+    La tabla tiene columnas fijas que mapean directamente a los campos.
+    """
+    if not row or len(row) < 10:
+        return None
+
+    # Limpiar celdas vacías/None
+    row = [str(cell).strip() if cell else '' for cell in row]
+
+    # Estructura esperada de columnas:
+    # [STATUS, VLO, ORIGEN, SALIDA, ESCALA/DESTINO, LLEGADA, ..., L, M, M, J, V, S, D, INICIO, FIN]
+    # El número exacto de columnas puede variar según escalas
+
+    result = {
+        'status': '', 'vuelo': '', 'origen': '', 'salida1': '',
+        'escala1': '', 'llegada1': '', 'salida2': '', 'escala2': '',
+        'llegada2': '', 'salida3': '', 'destino': '', 'llegada3': '',
+        'lun': '', 'mar': '', 'mie': '', 'jue': '', 'vie': '', 'sab': '', 'dom': '',
+        'fechaInicio': '', 'fechaFin': ''
+    }
+
+    # Buscar índice donde empiezan los días (buscar patrón de 7 celdas con dígitos 0-14)
+    day_start_idx = -1
+    for i in range(len(row) - 8):  # Necesitamos al menos 7 celdas para días + fechas
+        # Verificar si las siguientes 7 celdas parecen códigos de equipo
+        potential_days = row[i:i+7]
+        valid_codes = 0
+        for cell in potential_days:
+            if cell in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '']:
+                valid_codes += 1
+        if valid_codes >= 5:  # Al menos 5 de 7 parecen códigos válidos
+            day_start_idx = i
+            break
+
+    if day_start_idx == -1:
+        return None  # No encontramos la sección de días
+
+    # Extraer datos del vuelo (antes de los días)
+    flight_data = row[:day_start_idx]
+
+    # Status y número de vuelo
+    idx = 0
+    if len(flight_data) > idx and flight_data[idx] in ['A', 'C', '-', '']:
+        if flight_data[idx] in ['A', 'C']:
+            result['status'] = flight_data[idx]
+        idx += 1
+
+    if len(flight_data) > idx and flight_data[idx]:
+        # Puede ser solo número o número+origen concatenado
+        vuelo_cell = flight_data[idx]
+        match = re.match(r'^(\d+)([A-Z]{3})?$', vuelo_cell)
+        if match:
+            result['vuelo'] = match.group(1)
+            if match.group(2):
+                result['origen'] = match.group(2)
+                idx += 1
+            else:
+                idx += 1
+                if len(flight_data) > idx:
+                    result['origen'] = flight_data[idx]
+                    idx += 1
+        else:
+            return None  # No es un vuelo válido
+
+    # Parsear segmentos restantes (origen, salida, escalas, llegadas)
+    segments = flight_data[idx:]
+    seg_idx = 0
+
+    # Origen (si no lo tenemos)
+    if not result['origen'] and seg_idx < len(segments):
+        if re.match(r'^[A-Z]{3}$', segments[seg_idx]):
+            result['origen'] = segments[seg_idx]
+            seg_idx += 1
+
+    # Salida 1
+    if seg_idx < len(segments) and re.match(r'^\d{1,4}$', segments[seg_idx]):
+        result['salida1'] = segments[seg_idx]
+        seg_idx += 1
+
+    # Escala 1 / Destino
+    if seg_idx < len(segments) and re.match(r'^[A-Z]{3}$', segments[seg_idx]):
+        result['escala1'] = segments[seg_idx]
+        seg_idx += 1
+
+    # Llegada 1
+    if seg_idx < len(segments) and re.match(r'^\d{1,4}$', segments[seg_idx]):
+        result['llegada1'] = segments[seg_idx]
+        seg_idx += 1
+
+    # Más segmentos si existen...
+    if seg_idx < len(segments) and re.match(r'^\d{1,4}$', segments[seg_idx]):
+        result['salida2'] = segments[seg_idx]
+        seg_idx += 1
+
+    if seg_idx < len(segments) and re.match(r'^[A-Z]{3}$', segments[seg_idx]):
+        result['escala2'] = segments[seg_idx]
+        seg_idx += 1
+
+    if seg_idx < len(segments) and re.match(r'^\d{1,4}$', segments[seg_idx]):
+        result['llegada2'] = segments[seg_idx]
+        seg_idx += 1
+
+    # Extraer días (7 columnas a partir de day_start_idx)
+    for i, day_field in enumerate(day_fields):
+        if day_start_idx + i < len(row):
+            code = row[day_start_idx + i]
+            # Solo guardar si es un código válido (no vacío, no "-1")
+            if code and code not in ['', '-1', '-']:
+                result[day_field] = code
+
+    # Extraer fechas (después de los días)
+    date_start_idx = day_start_idx + 7
+    if date_start_idx < len(row) and row[date_start_idx]:
+        fecha = row[date_start_idx]
+        if re.match(r'^\d{6}$', fecha):
+            result['fechaInicio'] = fecha
+    if date_start_idx + 1 < len(row) and row[date_start_idx + 1]:
+        fecha = row[date_start_idx + 1]
+        if re.match(r'^\d{6}$', fecha):
+            result['fechaFin'] = fecha
+
+    # Validar que tengamos datos mínimos
+    if result['vuelo'] and result['origen']:
+        return result
+    return None
+
+
+def extract_flights_from_pdf_tables(pdf_data: bytes) -> List[Dict]:
+    """
+    Extrae vuelos usando extracción de tablas de pdfplumber.
+    Esto preserva la estructura de columnas correctamente.
+    """
+    if not HAS_PDFPLUMBER:
+        return []
+
+    flights = []
+    day_fields = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
+
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_data)) as pdf:
+            for page in pdf.pages:
+                # Extraer tablas de la página
+                tables = page.extract_tables()
+
+                for table in tables:
+                    if not table:
+                        continue
+
+                    for row in table:
+                        if not row:
+                            continue
+
+                        # Intentar parsear la fila como un vuelo
+                        parsed = parse_table_row(row, day_fields)
+                        if parsed:
+                            flights.append(parsed)
+
+    except Exception as e:
+        import sys
+        print(f"[ERROR] Table extraction failed: {e}", file=sys.stderr)
+        return []
+
+    return flights
+
+
 def extract_text_from_zip(zip_data: bytes) -> str:
     """Extract text from ZIP file containing TXT files"""
     all_text = []
@@ -574,7 +741,32 @@ class handler(BaseHTTPRequestHandler):
                 text = data.get('text', '')
                 source_type = 'json'
             elif is_pdf(body):
-                # PDF file - extract text
+                # PDF file - intentar extracción de tablas primero
+                table_flights = extract_flights_from_pdf_tables(body)
+                if table_flights and len(table_flights) > 0:
+                    # Éxito con tablas - usar estos vuelos directamente
+                    text = extract_text_from_pdf(body)  # Para metadatos
+                    source_type = compressed_prefix + 'pdf-table'
+
+                    metadata = extract_metadata(text)
+
+                    response = {
+                        'success': True,
+                        'total': len(table_flights),
+                        'flights': table_flights,
+                        'source': source_type,
+                        'textLength': len(text),
+                        'metadata': metadata
+                    }
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response, ensure_ascii=False).encode('utf-8'))
+                    return
+
+                # Fallback a extracción de texto
                 text = extract_text_from_pdf(body)
                 source_type = compressed_prefix + 'pdf'
             elif is_zip(body):
