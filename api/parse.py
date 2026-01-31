@@ -113,7 +113,12 @@ class ItineraryParser:
 
     @staticmethod
     def is_frequency(token: str) -> bool:
-        return bool(re.match(r'^[0-7]$', token))
+        # Códigos de equipo: 0-8 (un dígito) o 10-14 (dos dígitos)
+        if re.match(r'^[0-8]$', token):
+            return True
+        if token in ['10', '11', '12', '13', '14']:
+            return True
+        return False
 
     def _find_section_boundary(self, tokens: List[str], start_idx: int) -> int:
         """
@@ -301,9 +306,11 @@ class ItineraryParser:
                 for day, freq in assigned.items():
                     result[day] = freq
             elif len(frequencies) == 7:
-                # 7 frecuencias = todos los días en orden
+                # 7 códigos = todos los días en orden
                 for i, freq in enumerate(frequencies):
-                    result[day_fields[i]] = freq
+                    # Solo guardar si NO es 0 (0 = no opera)
+                    if freq != '0':
+                        result[day_fields[i]] = freq
             else:
                 # Fallback: alinear a la derecha (hacia domingo)
                 start_idx = 7 - len(frequencies)
@@ -379,35 +386,43 @@ class ItineraryParser:
 
     def _assign_frequencies_by_position(self, line: str, day_fields: List[str]) -> Dict[str, str]:
         """
-        Asigna frecuencias a días revisando directamente cada columna.
-        Para cada día, busca si hay un dígito AISLADO en esa posición de la línea.
+        Asigna códigos de equipo a días revisando directamente cada columna.
+        Los códigos pueden ser de 1 o 2 dígitos (0-14).
+        0 = no opera, 1-14 = código de equipo.
         """
         result = {}
 
         if not self.day_column_positions:
             return result
 
-        # Para cada día, revisar si hay un dígito (1-7) AISLADO en su columna
-        # Un dígito aislado está rodeado por espacios (no parte de un número mayor como "1230")
+        # Para cada día, buscar código de equipo en su columna
         for day_idx, day_pos in enumerate(self.day_column_positions):
-            # Revisar el carácter exacto en la posición del día (±1)
-            for offset in [0, -1, 1]:
+            # Buscar en una ventana alrededor de la posición del día
+            for offset in [0, -1, 1, -2, 2]:
                 pos = day_pos + offset
                 if pos < 0 or pos >= len(line):
                     continue
 
                 char = line[pos]
 
-                # Verificar que sea un dígito 1-7
-                if char in '1234567':
-                    # Verificar que esté AISLADO (no parte de un número mayor)
+                # Verificar que sea un dígito
+                if char.isdigit():
                     prev_char = line[pos - 1] if pos > 0 else ' '
                     next_char = line[pos + 1] if pos < len(line) - 1 else ' '
 
-                    # Es aislado si está rodeado por espacios o no-dígitos
-                    if not prev_char.isdigit() and not next_char.isdigit():
-                        result[day_fields[day_idx]] = char
-                        break  # Encontrado para este día, pasar al siguiente
+                    # Verificar si es un número de dos dígitos (10-14)
+                    if char == '1' and next_char.isdigit() and not prev_char.isdigit():
+                        # Es 10, 11, 12, 13, o 14
+                        two_digit = char + next_char
+                        if two_digit in ['10', '11', '12', '13', '14']:
+                            result[day_fields[day_idx]] = two_digit
+                            break
+                    # Si es un dígito aislado (no parte de un número mayor)
+                    elif not prev_char.isdigit() and not next_char.isdigit():
+                        # Solo guardar si NO es 0 (0 = no opera)
+                        if char != '0':
+                            result[day_fields[day_idx]] = char
+                        break
 
         return result
 
