@@ -89,6 +89,10 @@ class ItineraryParser:
         'fechaInicio', 'fechaFin'
     ]
 
+    def __init__(self):
+        # Posiciones de columna de los días (se calibran con el encabezado)
+        self.day_column_positions = None
+
     @staticmethod
     def is_airport(token: str) -> bool:
         return bool(re.match(r'^[A-Z]{3}$', token))
@@ -289,19 +293,24 @@ class ItineraryParser:
             elif self.is_date(token):
                 dates.append(token)
 
-        # Asignar frecuencias a días
-        # IMPORTANTE: Las frecuencias se alinean a la DERECHA (hacia domingo)
-        # Ejemplos:
-        # - 7 frecuencias = L M M J V S D (índices 0-6)
-        # - 6 frecuencias =   M M J V S D (índices 1-6, sin lunes)
-        # - 1 frecuencia  =             D (índice 6, solo domingo)
-        if len(frequencies) > 0:
-            # Alinear a la derecha: el último valor siempre es domingo (índice 6)
-            start_idx = 7 - len(frequencies)
-            for i, freq in enumerate(frequencies):
-                day_idx = start_idx + i
-                if 0 <= day_idx < 7:
-                    result[day_fields[day_idx]] = freq
+        # Asignar frecuencias a días usando posiciones de columna
+        if len(frequencies) > 0 and len(frequencies) <= 7:
+            if self.day_column_positions and len(frequencies) < 7:
+                # Usar posiciones calibradas del encabezado
+                assigned = self._assign_frequencies_by_position(line, frequencies, day_fields)
+                for day, freq in assigned.items():
+                    result[day] = freq
+            elif len(frequencies) == 7:
+                # 7 frecuencias = todos los días en orden
+                for i, freq in enumerate(frequencies):
+                    result[day_fields[i]] = freq
+            else:
+                # Fallback: alinear a la derecha (hacia domingo)
+                start_idx = 7 - len(frequencies)
+                for i, freq in enumerate(frequencies):
+                    day_idx = start_idx + i
+                    if 0 <= day_idx < 7:
+                        result[day_fields[day_idx]] = freq
 
         if len(dates) >= 1:
             result['fechaInicio'] = dates[0]
@@ -315,7 +324,13 @@ class ItineraryParser:
         skip_patterns = ['S VLO', 'EFECTIVIDAD', 'ITINERARIOS', 'Emisión',
                         'EMISIÓN', 'UTC', 'Notas:', 'información']
 
-        for line in text.split('\n'):
+        lines = text.split('\n')
+
+        # Primero, buscar el encabezado para calibrar posiciones de columna
+        self._calibrate_day_columns(lines)
+
+        for line in lines:
+            original_line = line  # Guardar línea original con espacios
             line = line.strip()
             if not line or re.match(r'^[\s\-]+$', line):
                 continue
@@ -327,11 +342,80 @@ class ItineraryParser:
             # - "1 MEX 10" (PDFKit format with spaces)
             # - "1MEX 10MAD" (pdfplumber format, concatenated)
             if re.match(r'^\s*[AC\-]?\s*\d+\s*[A-Z]{3}\s+\d+', line):
-                parsed = self.parse_line(line)
+                parsed = self.parse_line(original_line)
                 if parsed and parsed['vuelo']:
                     flights.append(parsed)
 
         return flights
+
+    def _calibrate_day_columns(self, lines: List[str]):
+        """
+        Busca el encabezado 'L M M J V S D' y extrae las posiciones de cada columna.
+        Esto permite mapear correctamente las frecuencias a los días.
+        """
+        day_letters = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+
+        for line in lines:
+            # Buscar línea que contenga el patrón de días
+            # Puede ser "L M M J V S D" o similar
+            if re.search(r'\bL\s+M\s+M\s+J\s+V\s+S\s+D\b', line):
+                positions = []
+                # Encontrar posición de cada letra de día
+                idx = 0
+                for day in day_letters:
+                    pos = line.find(day, idx)
+                    if pos != -1:
+                        positions.append(pos)
+                        idx = pos + 1
+                    else:
+                        positions.append(-1)
+
+                if len(positions) == 7 and all(p >= 0 for p in positions):
+                    self.day_column_positions = positions
+                    return
+
+        # Si no encontramos el encabezado, usar posiciones por defecto
+        self.day_column_positions = None
+
+    def _assign_frequencies_by_position(self, line: str, frequencies: List[str], day_fields: List[str]) -> Dict[str, str]:
+        """
+        Asigna frecuencias a días basándose en la posición de los caracteres en la línea.
+        Compara la posición de cada frecuencia con las posiciones calibradas del encabezado.
+        """
+        result = {}
+
+        if not self.day_column_positions:
+            return result
+
+        # Encontrar la posición de cada frecuencia en la línea original
+        freq_positions = []
+        search_start = 0
+
+        # Buscar cada frecuencia en orden de aparición
+        for freq in frequencies:
+            # Buscar el dígito de frecuencia (0-7) en la línea
+            pos = line.find(freq, search_start)
+            if pos != -1:
+                freq_positions.append((pos, freq))
+                search_start = pos + 1
+
+        # Para cada frecuencia encontrada, determinar a qué día pertenece
+        for pos, freq in freq_positions:
+            best_day_idx = -1
+            min_distance = float('inf')
+
+            # Encontrar la columna de día más cercana a esta posición
+            for day_idx, day_pos in enumerate(self.day_column_positions):
+                distance = abs(pos - day_pos)
+                if distance < min_distance:
+                    min_distance = distance
+                    best_day_idx = day_idx
+
+            # Asignar al día más cercano si la distancia es razonable (< 5 caracteres)
+            if best_day_idx >= 0 and min_distance < 5:
+                result[day_fields[best_day_idx]] = freq
+
+        return result
 
 
 def extract_text_from_zip(zip_data: bytes) -> str:
