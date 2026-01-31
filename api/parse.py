@@ -307,10 +307,9 @@ class ItineraryParser:
                     result[day] = freq
             elif len(frequencies) == 7:
                 # 7 códigos = todos los días en orden
+                # Todos los códigos son válidos (0-14)
                 for i, freq in enumerate(frequencies):
-                    # Solo guardar si NO es 0 (0 = no opera)
-                    if freq != '0':
-                        result[day_fields[i]] = freq
+                    result[day_fields[i]] = freq
             else:
                 # Fallback: alinear a la derecha (hacia domingo)
                 start_idx = 7 - len(frequencies)
@@ -388,7 +387,7 @@ class ItineraryParser:
         """
         Asigna códigos de equipo a días revisando directamente cada columna.
         Los códigos pueden ser de 1 o 2 dígitos (0-14).
-        0 = no opera, 1-14 = código de equipo.
+        -1 = no opera, 0-14 = código de equipo válido.
         """
         result = {}
 
@@ -397,6 +396,8 @@ class ItineraryParser:
 
         # Para cada día, buscar código de equipo en su columna
         for day_idx, day_pos in enumerate(self.day_column_positions):
+            found = False
+
             # Buscar en una ventana alrededor de la posición del día
             for offset in [0, -1, 1, -2, 2]:
                 pos = day_pos + offset
@@ -412,17 +413,21 @@ class ItineraryParser:
 
                     # Verificar si es un número de dos dígitos (10-14)
                     if char == '1' and next_char.isdigit() and not prev_char.isdigit():
-                        # Es 10, 11, 12, 13, o 14
                         two_digit = char + next_char
                         if two_digit in ['10', '11', '12', '13', '14']:
                             result[day_fields[day_idx]] = two_digit
+                            found = True
                             break
                     # Si es un dígito aislado (no parte de un número mayor)
                     elif not prev_char.isdigit() and not next_char.isdigit():
-                        # Solo guardar si NO es 0 (0 = no opera)
-                        if char != '0':
-                            result[day_fields[day_idx]] = char
+                        # Guardar el código (0-9 son válidos)
+                        result[day_fields[day_idx]] = char
+                        found = True
                         break
+
+            # Si no encontramos código para este día, poner -1
+            if not found:
+                result[day_fields[day_idx]] = '-1'
 
         return result
 
