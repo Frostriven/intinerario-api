@@ -290,16 +290,16 @@ class ItineraryParser:
                 dates.append(token)
 
         # Asignar frecuencias a días
-        # Si hay exactamente 7 frecuencias, asignar en orden L-D
-        # Si hay menos, necesitamos inferir posiciones basándonos en la línea original
-        if len(frequencies) == 7:
+        # IMPORTANTE: Las frecuencias se alinean a la DERECHA (hacia domingo)
+        # Ejemplos:
+        # - 7 frecuencias = L M M J V S D (índices 0-6)
+        # - 6 frecuencias =   M M J V S D (índices 1-6, sin lunes)
+        # - 1 frecuencia  =             D (índice 6, solo domingo)
+        if len(frequencies) > 0:
+            # Alinear a la derecha: el último valor siempre es domingo (índice 6)
+            start_idx = 7 - len(frequencies)
             for i, freq in enumerate(frequencies):
-                result[day_fields[i]] = freq
-        elif len(frequencies) > 0 and len(frequencies) < 7:
-            # Buscar las posiciones de las frecuencias en la línea original
-            # para determinar a qué día corresponden
-            freq_positions = self._find_frequency_positions(line, frequencies, dates)
-            for day_idx, freq in freq_positions:
+                day_idx = start_idx + i
                 if 0 <= day_idx < 7:
                     result[day_fields[day_idx]] = freq
 
@@ -307,77 +307,6 @@ class ItineraryParser:
             result['fechaInicio'] = dates[0]
         if len(dates) >= 2:
             result['fechaFin'] = dates[1]
-
-        return result
-
-    def _find_frequency_positions(self, line: str, frequencies: List[str], dates: List[str]) -> List[tuple]:
-        """
-        Encuentra las posiciones de columna de las frecuencias en la línea.
-        Retorna lista de tuplas (day_index, frequency_value).
-
-        Estrategia: Buscar cada dígito de frecuencia en la línea original y
-        calcular su posición relativa dentro de la zona de días (7 columnas).
-        """
-        result = []
-
-        # Encontrar dónde empieza la primera fecha (6 dígitos)
-        date_start = len(line)
-        for date in dates:
-            pos = line.find(date)
-            if pos != -1 and pos < date_start:
-                date_start = pos
-
-        # Encontrar dónde termina la información del vuelo
-        # Buscar el último tiempo (3-4 dígitos) o aeropuerto (3 letras mayúsculas)
-        last_flight_end = 0
-        for match in re.finditer(r'\b(\d{3,4}|[A-Z]{3})\b', line[:date_start]):
-            val = match.group()
-            # Ignorar si es solo 1 dígito (frecuencia) o si parece fecha
-            if len(val) >= 3:
-                last_flight_end = match.end()
-
-        # La zona de días está entre last_flight_end y date_start
-        days_zone_start = last_flight_end
-        days_zone_end = date_start
-        days_zone = line[days_zone_start:days_zone_end]
-        days_zone_width = len(days_zone)
-
-        if days_zone_width <= 0:
-            # Fallback: asignar en orden
-            return [(i, f) for i, f in enumerate(frequencies)]
-
-        # Buscar cada frecuencia en la zona de días
-        # y calcular su posición como porcentaje del ancho total
-        freq_with_pos = []
-        for freq in frequencies:
-            # Buscar el dígito aislado (no parte de otro número)
-            pattern = r'(?<!\d)' + re.escape(freq) + r'(?!\d)'
-            match = re.search(pattern, days_zone)
-            if match:
-                pos = match.start()
-                freq_with_pos.append((pos, freq))
-
-        if not freq_with_pos:
-            # No encontramos las frecuencias en la zona, usar fallback
-            # Asumir que van de derecha a izquierda (domingo = última posición)
-            num_freq = len(frequencies)
-            for i, freq in enumerate(frequencies):
-                day_idx = 7 - num_freq + i  # Alinear a la derecha
-                day_idx = max(0, min(6, day_idx))
-                result.append((day_idx, freq))
-            return result
-
-        # Ordenar por posición
-        freq_with_pos.sort(key=lambda x: x[0])
-
-        # Calcular el día basándose en la posición relativa
-        # La zona se divide en 7 columnas iguales
-        col_width = days_zone_width / 7.0
-
-        for pos, freq in freq_with_pos:
-            day_idx = int(pos / col_width)
-            day_idx = max(0, min(6, day_idx))
-            result.append((day_idx, freq))
 
         return result
 
