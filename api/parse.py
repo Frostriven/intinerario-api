@@ -380,28 +380,34 @@ class ItineraryParser:
     def _assign_frequencies_by_position(self, line: str, day_fields: List[str]) -> Dict[str, str]:
         """
         Asigna frecuencias a días revisando directamente cada columna.
-        Para cada día, busca si hay un dígito en esa posición de la línea.
+        Para cada día, busca si hay un dígito AISLADO en esa posición de la línea.
         """
         result = {}
 
         if not self.day_column_positions:
             return result
 
-        # Para cada día, revisar si hay un dígito (1-7) en su columna
-        # Usamos una ventana de ±2 caracteres alrededor de la posición del encabezado
+        # Para cada día, revisar si hay un dígito (1-7) AISLADO en su columna
+        # Un dígito aislado está rodeado por espacios (no parte de un número mayor como "1230")
         for day_idx, day_pos in enumerate(self.day_column_positions):
-            # Definir ventana de búsqueda para esta columna
-            start = max(0, day_pos - 2)
-            end = min(len(line), day_pos + 3)
+            # Revisar el carácter exacto en la posición del día (±1)
+            for offset in [0, -1, 1]:
+                pos = day_pos + offset
+                if pos < 0 or pos >= len(line):
+                    continue
 
-            # Extraer el segmento de la línea para esta columna
-            segment = line[start:end]
+                char = line[pos]
 
-            # Buscar un dígito 1-7 (frecuencia activa) en el segmento
-            # No buscamos 0 porque 0 significa "no opera"
-            match = re.search(r'[1-7]', segment)
-            if match:
-                result[day_fields[day_idx]] = match.group(0)
+                # Verificar que sea un dígito 1-7
+                if char in '1234567':
+                    # Verificar que esté AISLADO (no parte de un número mayor)
+                    prev_char = line[pos - 1] if pos > 0 else ' '
+                    next_char = line[pos + 1] if pos < len(line) - 1 else ' '
+
+                    # Es aislado si está rodeado por espacios o no-dígitos
+                    if not prev_char.isdigit() and not next_char.isdigit():
+                        result[day_fields[day_idx]] = char
+                        break  # Encontrado para este día, pasar al siguiente
 
         return result
 
