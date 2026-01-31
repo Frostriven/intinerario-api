@@ -285,37 +285,52 @@ class ItineraryParser:
                     break
 
         # 13-21. FRECUENCIAS Y FECHAS
-        # Usar posiciones de columna para asignar días correctamente
+        # NUEVO: Parsear desde el final de la línea (más confiable)
         day_fields = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom']
-        dates = []
 
-        # Recolectar frecuencias y fechas de los tokens restantes
+        # Recolectar todos los tokens restantes
         remaining_tokens = tokens[boundary:]
-        frequencies = []
-        for token in remaining_tokens:
-            if self.is_frequency(token):
-                frequencies.append(token)
-            elif self.is_date(token):
+
+        # Buscar fechas desde el final (son números de 6 dígitos)
+        dates = []
+        date_indices = []
+        for i, token in enumerate(remaining_tokens):
+            if self.is_date(token):
                 dates.append(token)
+                date_indices.append(i)
+
+        # Encontrar dónde terminan los códigos de día
+        # Los códigos están ANTES de las fechas
+        if date_indices:
+            first_date_idx = date_indices[0]
+            # Los 7 tokens antes de la primera fecha son los días (si existen)
+            day_tokens_start = max(0, first_date_idx - 7)
+            day_tokens = remaining_tokens[day_tokens_start:first_date_idx]
+        else:
+            # No hay fechas, tomar los últimos tokens como días
+            day_tokens = remaining_tokens[-7:] if len(remaining_tokens) >= 7 else remaining_tokens
 
         # Asignar códigos de equipo a días
-        if len(frequencies) > 0 and len(frequencies) <= 7:
-            if len(frequencies) == 7:
-                # 7 códigos = todos los días en orden
-                for i, freq in enumerate(frequencies):
-                    result[day_fields[i]] = freq
-            elif len(frequencies) >= 1 and self.day_column_positions:
-                # Usar posiciones calibradas, pero validar que coincida con tokens
-                assigned = self._assign_frequencies_by_position(line, day_fields, frequencies)
-                for day, freq in assigned.items():
-                    result[day] = freq
-            else:
-                # Fallback: alinear a la derecha (hacia domingo)
-                start_idx = 7 - len(frequencies)
-                for i, freq in enumerate(frequencies):
-                    day_idx = start_idx + i
-                    if 0 <= day_idx < 7:
-                        result[day_fields[day_idx]] = freq
+        # Si tenemos exactamente 7, asignar en orden
+        # Si tenemos menos, alinear a la DERECHA (hacia domingo)
+        valid_day_codes = []
+        for token in day_tokens:
+            if self.is_frequency(token):
+                valid_day_codes.append(token)
+
+        if len(valid_day_codes) == 7:
+            # 7 códigos = todos los días en orden
+            for i, code in enumerate(valid_day_codes):
+                # Solo guardar si NO es vacío (celda vacía = no opera)
+                if code and code not in ['', '-']:
+                    result[day_fields[i]] = code
+        elif len(valid_day_codes) > 0:
+            # Menos de 7: alinear a la derecha (domingo es el último)
+            start_idx = 7 - len(valid_day_codes)
+            for i, code in enumerate(valid_day_codes):
+                day_idx = start_idx + i
+                if 0 <= day_idx < 7 and code and code not in ['', '-']:
+                    result[day_fields[day_idx]] = code
 
         if len(dates) >= 1:
             result['fechaInicio'] = dates[0]
