@@ -95,7 +95,8 @@ class ItineraryParser:
 
     @staticmethod
     def is_time(token: str) -> bool:
-        if not re.match(r'^\d{2,4}$', token):
+        # Aceptar 1-4 dígitos (ej: "5" = 00:05, "10" = 00:10, "1030" = 10:30)
+        if not re.match(r'^\d{1,4}$', token):
             return False
         return int(token) <= 2359
 
@@ -124,8 +125,8 @@ class ItineraryParser:
             # Contar aeropuertos encontrados
             if self.is_airport(token):
                 airport_count += 1
-            # También contar si es un token concatenado número+aeropuerto
-            elif re.match(r'^(\d{2,4})([A-Z]{3})$', token):
+            # También contar si es un token concatenado número+aeropuerto (ej: "5MAD", "1030MAD")
+            elif re.match(r'^(\d{1,4})([A-Z]{3})$', token):
                 airport_count += 1
 
             # Solo buscar frecuencias si ya encontramos al menos 2 aeropuertos
@@ -198,12 +199,12 @@ class ItineraryParser:
         # e.g., "10MAD" -> "10", "MAD" or "1030MEX" -> "1030", "MEX"
         expanded_tokens = []
         for token in flight_tokens:
-            # Check if token is time+airport concatenated (e.g., "1030MAD", "955MEX")
-            concat_match = re.match(r'^(\d{2,4})([A-Z]{3})$', token)
+            # Check if token is time+airport concatenated (e.g., "1030MAD", "955MEX", "5MAD")
+            concat_match = re.match(r'^(\d{1,4})([A-Z]{3})$', token)
             if concat_match:
                 time_part = concat_match.group(1)
                 airport_part = concat_match.group(2)
-                if int(time_part) <= 2359:  # Valid time
+                if int(time_part) <= 2359:  # Valid time (1-4 digits)
                     expanded_tokens.append(time_part)
                     expanded_tokens.append(airport_part)
                 else:
