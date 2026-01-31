@@ -318,18 +318,21 @@ class ItineraryParser:
             if self.is_frequency(token):
                 valid_day_codes.append(token)
 
+        # DEBUG: Añadir info de diagnóstico
+        import sys
+        if result.get('vuelo'):
+            print(f"[DEBUG] Vuelo {result['vuelo']}: day_tokens={day_tokens}, valid_codes={valid_day_codes}", file=sys.stderr)
+
         if len(valid_day_codes) == 7:
             # 7 códigos = todos los días en orden
             for i, code in enumerate(valid_day_codes):
-                # Solo guardar si NO es vacío (celda vacía = no opera)
-                if code and code not in ['', '-']:
-                    result[day_fields[i]] = code
+                result[day_fields[i]] = code
         elif len(valid_day_codes) > 0:
             # Menos de 7: alinear a la derecha (domingo es el último)
             start_idx = 7 - len(valid_day_codes)
             for i, code in enumerate(valid_day_codes):
                 day_idx = start_idx + i
-                if 0 <= day_idx < 7 and code and code not in ['', '-']:
+                if 0 <= day_idx < 7:
                     result[day_fields[day_idx]] = code
 
         if len(dates) >= 1:
@@ -559,8 +562,9 @@ def parse_table_row(row: List[str], day_fields: List[str]) -> Optional[Dict]:
     for i, day_field in enumerate(day_fields):
         if day_start_idx + i < len(row):
             code = row[day_start_idx + i]
-            # Solo guardar si es un código válido (no vacío, no "-1")
-            if code and code not in ['', '-1', '-']:
+            # Guardar si es un código válido (0-14)
+            # Vacío = no opera ese día
+            if code and code.strip() and code not in ['-1', '-', 'None']:
                 result[day_field] = code
 
     # Extraer fechas (después de los días)
