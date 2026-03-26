@@ -33,6 +33,21 @@ Verifica el estado del servicio.
 
 Parsea un archivo de itinerario y extrae los vuelos.
 
+#### Query Parameters
+
+| Param | Valor | Descripción |
+|-------|-------|-------------|
+| `mode` | `rawtext` | Devuelve solo el texto extraido del PDF/ZIP como `text/plain`, sin parsear flights. Usado por iFly para el Rol de Servicios cuando PDFKit no puede extraer texto (fonts embebidas). |
+
+**Ejemplo:**
+```bash
+curl -X POST \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @rol.pdf \
+  "https://intinerario-api.vercel.app/api/parse?mode=rawtext"
+# Respuesta: texto plano extraido del PDF
+```
+
 #### Formatos de entrada soportados
 
 | Content-Type | Descripción |
@@ -203,6 +218,10 @@ print("Emisión: \(parsed.codigoEmision)")
 ```
 
 ## Changelog
+
+### v2.2 (2026-03-26)
+- Nuevo query param `mode=rawtext` para extraer solo texto del PDF sin parsear flights
+- Usado por iFly como fallback cuando PDFKit no extrae texto de PDFs con fonts embebidas (NotoSans Type0/Identity-H)
 
 ### v2.1 (2026-01-25)
 - Extracción de metadatos solo desde pie de página

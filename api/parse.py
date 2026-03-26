@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 import json
 import re
 import zipfile
@@ -751,6 +752,25 @@ class handler(BaseHTTPRequestHandler):
                 body = decompress_raw_deflate(body)
                 source_type = 'deflate+'
 
+            # mode=rawtext: devolver solo el texto extraído, sin parsear flights
+            query = parse_qs(urlparse(self.path).query)
+            mode = query.get('mode', [None])[0]
+
+            if mode == 'rawtext':
+                if is_pdf(body):
+                    text = extract_text_from_pdf(body)
+                elif is_zip(body):
+                    text = extract_text_from_zip(body)
+                else:
+                    text = body.decode('utf-8', errors='ignore')
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(text.encode('utf-8'))
+                return
+
             # Determine input type and extract text
             compressed_prefix = source_type if source_type.endswith('+') else ''
 
@@ -831,7 +851,7 @@ class handler(BaseHTTPRequestHandler):
         response = {
             'status': 'ok',
             'service': 'Itinerary Parser API',
-            'version': '2.1',
+            'version': '2.2',
             'capabilities': {
                 'pdf': HAS_PYPDF2 or HAS_PDFPLUMBER,
                 'zip': True,
