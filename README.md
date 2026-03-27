@@ -1,12 +1,38 @@
 # Itinerario Parser API
 
-API serverless en Vercel para parsear itinerarios de Aeromexico desde archivos PDF.
+API serverless en Vercel para parsear itinerarios de Aeroméxico desde archivos PDF.
+Usada por **iFly Antigravity 3.0** (app iPad) para importar itinerarios y extraer texto de PDFs con fonts embebidas.
 
 ## URL de Producción
 
 ```
 https://intinerario-api.vercel.app/api/parse
 ```
+
+## Repositorios
+
+| Repo | URL |
+|------|-----|
+| **Esta API** | [github.com/Frostriven/intinerario-api](https://github.com/Frostriven/intinerario-api) |
+| **iFly (app iPad)** | Repo principal de iFly Antigravity 3.0 |
+
+> Esta API vive como **git submodule** dentro del repo de iFly en `intinerario-api/`.
+> Es un proyecto independiente (Python/Vercel) que se despliega por separado.
+
+---
+
+## Estructura del Proyecto
+
+```
+intinerario-api/
+├── api/
+│   ├── parse.py           # Handler principal (serverless function)
+│   └── requirements.txt   # Dependencias Python
+├── vercel.json            # Configuración de rutas y build de Vercel
+└── README.md              # Esta documentación
+```
+
+---
 
 ## Endpoints
 
@@ -19,7 +45,7 @@ Verifica el estado del servicio.
 {
   "status": "ok",
   "service": "Itinerary Parser API",
-  "version": "2.1",
+  "version": "2.2",
   "capabilities": {
     "pdf": true,
     "zip": true,
@@ -37,15 +63,15 @@ Parsea un archivo de itinerario y extrae los vuelos.
 
 | Param | Valor | Descripción |
 |-------|-------|-------------|
-| `mode` | `rawtext` | Devuelve solo el texto extraido del PDF/ZIP como `text/plain`, sin parsear flights. Usado por iFly para el Rol de Servicios cuando PDFKit no puede extraer texto (fonts embebidas). |
+| `mode` | `rawtext` | Devuelve solo el texto extraído del PDF/ZIP como `text/plain`, sin parsear flights. Usado por iFly para el Rol de Servicios cuando PDFKit no puede extraer texto (fonts embebidas NotoSans Type0/Identity-H). |
 
-**Ejemplo:**
+**Ejemplo rawtext:**
 ```bash
 curl -X POST \
   -H "Content-Type: application/octet-stream" \
   --data-binary @rol.pdf \
   "https://intinerario-api.vercel.app/api/parse?mode=rawtext"
-# Respuesta: texto plano extraido del PDF
+# Respuesta: texto plano extraído del PDF
 ```
 
 #### Formatos de entrada soportados
@@ -66,7 +92,7 @@ Para archivos grandes (>4MB), la app iOS comprime el PDF usando zlib antes de en
 compression_encode_buffer(..., COMPRESSION_ZLIB)
 ```
 
-El API detecta y descomprime automáticamente.
+El API detecta y descomprime automáticamente: gzip, zlib, y raw deflate (iOS).
 
 #### Respuesta exitosa
 
@@ -125,9 +151,11 @@ El API detecta y descomprime automáticamente.
 | `escala1/2` | Códigos IATA de escalas |
 | `llegada1/2/3` | Hora de llegada de cada tramo (HHMM) |
 | `destino` | Código IATA del destino final |
-| `lun-dom` | Tipo de equipo por día (1-14) o vacío si no opera |
+| `lun-dom` | Tipo de equipo por día (0-14) o vacío si no opera |
 | `fechaInicio` | Inicio de efectividad (YYMMDD) |
 | `fechaFin` | Fin de efectividad (YYMMDD) |
+
+---
 
 ## Extracción de Metadatos
 
@@ -144,78 +172,235 @@ Se convierte a:
 
 ### Limpieza de espacios
 
-El extractor de PDF a veces inserta espacios en números (`202 6` en vez de `2026`). El API limpia estos automáticamente.
+El extractor de PDF a veces inserta espacios en números (`202 6` en vez de `2026`). El API limpia estos automáticamente con regex.
+
+---
 
 ## Dependencias
 
-- **pdfplumber**: Extracción precisa de texto de PDFs (preferido)
-- **PyPDF2**: Fallback para extracción de PDF
+| Paquete | Versión | Uso |
+|---------|---------|-----|
+| **pdfplumber** | >=0.10.0 | Extracción precisa de texto y tablas (preferido) |
+| **PyPDF2** | >=3.0.0 | Fallback para extracción de PDF |
 
-## Límites
+## Límites de Vercel
 
 | Límite | Valor |
 |--------|-------|
 | Tamaño máximo de body | 4 MB |
-| Timeout | 60 segundos |
+| Timeout (Hobby plan) | 60 segundos |
+| Timeout (Pro plan) | 300 segundos |
 
 Para PDFs mayores a 4MB, la app iOS los comprime con zlib antes de enviar.
 
+---
+
 ## Desarrollo Local
+
+### Requisitos previos
+
+- Python 3.9+
+- Vercel CLI (`npm i -g vercel`)
+
+### Ejecutar localmente
 
 ```bash
 cd intinerario-api
-vercel dev
+pip install -r api/requirements.txt   # Instalar dependencias Python
+vercel dev                             # Arranca servidor local en http://localhost:3000
 ```
 
-## Despliegue
-
-El proyecto está conectado a GitHub. Cada push a `main` despliega automáticamente en Vercel.
+### Probar con cURL
 
 ```bash
-git add .
-git commit -m "Descripción del cambio"
-git push origin main
-```
+# Health check
+curl http://localhost:3000/api/parse
 
-## Estructura del Proyecto
-
-```
-intinerario-api/
-├── api/
-│   └── parse.py      # Handler principal
-├── requirements.txt  # Dependencias Python
-├── vercel.json       # Configuración de Vercel
-└── README.md         # Esta documentación
-```
-
-## Ejemplos de uso
-
-### cURL - Enviar PDF
-
-```bash
+# Parsear PDF
 curl -X POST \
   -H "Content-Type: application/octet-stream" \
   --data-binary @itinerario.pdf \
-  https://intinerario-api.vercel.app/api/parse
-```
+  http://localhost:3000/api/parse
 
-### cURL - Enviar texto
+# Extraer solo texto (rawtext)
+curl -X POST \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @rol.pdf \
+  "http://localhost:3000/api/parse?mode=rawtext"
 
-```bash
+# Enviar JSON con texto
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"text": "1 MEX 0600 GDL 0730 1 2 3 4 5 260126 220226"}' \
-  https://intinerario-api.vercel.app/api/parse
+  http://localhost:3000/api/parse
 ```
 
-### Swift (iOS)
+---
+
+## Despliegue (Deploy)
+
+### Deploy automático (recomendado)
+
+El proyecto está conectado a GitHub via Vercel. **Cada push a `main` despliega automáticamente.**
+
+```bash
+cd intinerario-api
+git add .
+git commit -m "Descripción del cambio"
+git push origin main
+# Vercel detecta el push y despliega automáticamente (~30 segundos)
+```
+
+### Deploy manual
+
+Si necesitas desplegar sin hacer push:
+
+```bash
+cd intinerario-api
+vercel --prod          # Despliega directo a producción
+```
+
+### Preview deployments
+
+Cada push a una rama que no sea `main` genera un **preview deployment** con URL temporal:
+
+```bash
+git checkout -b feature/nueva-funcionalidad
+git push origin feature/nueva-funcionalidad
+# Vercel genera: https://intinerario-api-xxxx.vercel.app
+```
+
+---
+
+## Dashboard de Vercel
+
+Para ver logs, deployments, y configuración:
+
+1. Ir a [vercel.com/dashboard](https://vercel.com/dashboard)
+2. Seleccionar el proyecto **intinerario-api**
+3. Tabs disponibles:
+   - **Deployments**: Historial de deploys, logs de build
+   - **Logs**: Runtime logs en tiempo real (print statements de parse.py)
+   - **Settings**: Variables de entorno, dominio, etc.
+   - **Analytics**: Invocaciones, duración, errores
+
+### Ver logs desde la terminal
+
+```bash
+vercel logs https://intinerario-api.vercel.app     # Últimos logs
+vercel logs --follow                                # Logs en tiempo real
+```
+
+---
+
+## GitHub — Repositorio y Actions
+
+### Acceder al repositorio
+
+```
+https://github.com/Frostriven/intinerario-api
+```
+
+Desde ahí puedes:
+- **Code**: Ver código fuente y commits
+- **Pull requests**: Crear/revisar PRs
+- **Issues**: Reportar bugs o solicitar features
+- **Actions**: Ver workflows de CI/CD (ver abajo)
+- **Settings**: Configuración del repo, branch protection, secrets
+
+### GitHub Actions
+
+Actualmente el proyecto **no tiene workflows de GitHub Actions** porque Vercel maneja el CI/CD automáticamente (build + deploy en cada push).
+
+Si quisieras agregar Actions (tests, linting, etc.), crea el archivo:
+
+```
+.github/workflows/test.yml
+```
+
+Ejemplo básico:
+
+```yaml
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r api/requirements.txt
+      - run: python -m pytest tests/ -v
+```
+
+Para ver Actions: `https://github.com/Frostriven/intinerario-api/actions`
+
+### Protección de rama (opcional)
+
+En **Settings > Branches** puedes:
+- Requerir PR para merges a `main`
+- Requerir que Actions pasen antes de merge
+- Requerir code reviews
+
+---
+
+## Flujo de trabajo: Actualizar la API desde iFly
+
+Dado que `intinerario-api/` es un submodule dentro de iFly, el flujo es:
+
+```bash
+# 1. Editar archivos dentro de intinerario-api/
+#    (ej: api/parse.py)
+
+# 2. Commit y push DENTRO del submodule
+cd intinerario-api
+git add .
+git commit -m "Fix: descripción del cambio"
+git push origin main
+# → Vercel despliega automáticamente
+
+# 3. (Opcional) Actualizar referencia en el repo padre
+cd ..   # volver a iFly Antigravity 3.0
+git add intinerario-api
+git commit -m "Update: intinerario-api submodule"
+git push origin main
+```
+
+### Clonar el proyecto completo (nueva Mac)
+
+```bash
+# Clonar con submodules incluidos
+git clone --recurse-submodules <url-repo-ifly>
+
+# O si ya clonaste sin --recurse-submodules:
+git submodule update --init --recursive
+```
+
+---
+
+## Uso desde Swift (iFly)
 
 ```swift
 let apiService = ItinerarioAPIService()
+
+// Parsear itinerario completo
 let parsed = try await apiService.parseItinerario(from: pdfData, filename: "itinerario.pdf")
 print("Vuelos: \(parsed.vuelos.count)")
 print("Emisión: \(parsed.codigoEmision)")
+
+// Extraer solo texto (para Rol de Servicios)
+let text = try await apiService.extractRawText(from: pdfData)
+print("Texto: \(text.prefix(200))")
 ```
+
+---
 
 ## Changelog
 
